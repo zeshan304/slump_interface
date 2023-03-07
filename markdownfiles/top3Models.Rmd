@@ -1,0 +1,162 @@
+---
+title: "Final_top_three_models"
+author: "Muhammad Zeshan Akber"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+---
+
+```{r pkgLoad, echo=TRUE, message=FALSE, warning=FALSE, results='hide', cache=TRUE}
+
+library(repr)
+library(dplyr)
+library(caret)
+library(here)
+library(skimr)
+library(readr)
+library(tidyverse)
+library(doParallel)
+library(purrr)
+# Parallel computing to start working on 12 out of 16 cpus
+cl <- makePSOCKcluster(12); registerDoParallel(cl)
+
+```
+
+# Data importing and preparing
+
+```{r dataImp, echo=TRUE, message=FALSE, warning=FALSE, results='hide', cache=TRUE}
+df <- read.csv(paste(getwd(),'/data/df_sl_int_230131.csv',sep="")
+               , stringsAsFactors = FALSE)
+# Setting the names of data variables
+names(df) <- c("Date", "Ticket_No", "MIX_ID", "Batch_size", "CAG_10mm",
+               "CAG_20mm", "FAG", "PFA", "Water", "WRA_KFDN100",
+               "SP1_KFDNSP8G", "SP2_R1002", "Item_Description", "Mix_Code",
+               "Slump", "Target_strength", "Cement", "CagT", "sp",
+               "Slump_class")
+```
+
+# ReTraining and downloading top three models
+```{r mlModels, echo=TRUE, message=FALSE, warning=FALSE, results='hide', cache=TRUE}
+
+# Training settings
+set.seed(1226)
+seeds <- vector(mode = "list", length = 51)
+for(i in 1:50) seeds[[i]] <- sample.int(1000, 243)
+set.seed(1226)
+seeds[[51]] <- sample.int(1000, 1)
+train_Control<-trainControl("repeatedcv", repeats=10, num=5,
+                            classProbs = TRUE, 
+                            summaryFunction=multiClassSummary, 
+                            seeds = seeds) # setting arugments of training
+
+# Setting the metric for optimization
+metric <- "logLoss"
+# Setting inputs and outputs
+Form <- formula(`Slump_class`~ Batch_size+ Cement+ Water+ PFA+ FAG+ CAG_10mm+
+                  CAG_20mm+ WRA_KFDN100+ SP1_KFDNSP8G+ SP2_R1002)
+# Setting preprocess method
+pre_process <- c("center", "scale")
+# Regularized logistic regression
+set.seed(1226)
+
+fit_t1_rf <- train(form=Form,data=df, method="rf", 
+                   metric=metric,trControl=train_Control,
+                   preProcess=pre_process)
+
+fit_t2_xgbTree <- train(form=Form,data=df, method="xgbTree", 
+                   metric=metric,trControl=train_Control,
+                   preProcess=pre_process)
+
+fit_t3_C5 <- train(form=Form,data=df, method="C5.0Tree", 
+                   metric=metric,trControl=train_Control,
+                   preProcess=pre_process)
+
+# Reducing the size of models
+
+fit_t1_rf<- fit_t1_rf%>% list_modify("results" = NULL)
+fit_t1_rf<- fit_t1_rf%>% list_modify("pred" = NULL)
+fit_t1_rf<- fit_t1_rf%>% list_modify("trainingData" = NULL)
+fit_t1_rf<- fit_t1_rf%>% list_modify("resample" = NULL)
+fit_t1_rf<- fit_t1_rf%>% list_modify("resampledCM" = NULL)
+
+fit_t2_xgbTree<- fit_t2_xgbTree%>% list_modify("results" = NULL)
+fit_t2_xgbTree<- fit_t2_xgbTree%>% list_modify("pred" = NULL)
+fit_t2_xgbTree<- fit_t2_xgbTree%>% list_modify("trainingData" = NULL)
+fit_t2_xgbTree<- fit_t2_xgbTree%>% list_modify("resample" = NULL)
+fit_t2_xgbTree<- fit_t2_xgbTree%>% list_modify("resampledCM" = NULL)
+
+fit_t3_C5<- fit_t3_C5%>% list_modify("results" = NULL)
+fit_t3_C5<- fit_t3_C5%>% list_modify("pred" = NULL)
+fit_t3_C5<- fit_t3_C5%>% list_modify("trainingData" = NULL)
+fit_t3_C5<- fit_t3_C5%>% list_modify("resample" = NULL)
+fit_t3_C5<- fit_t3_C5%>% list_modify("resampledCM" = NULL)
+
+dir.create('web_script/top3Models')
+
+save(fit_t1_rf , file = 'web_script/top3Models/Random_forest_t1.rda')
+save(fit_t2_xgbTree, file = 'web_script/top3Models/XGBoost_t2.rda')
+save(fit_t3_C5 , file = 'web_script/top3Models/C5_t3.rda')
+
+
+
+```
+
+# Drop box setting
+```{r dropbox , echo=TRUE, message=FALSE, warning=FALSE, results='hide', cache=TRUE}
+
+library(rdrop2)
+
+drop_auth()
+# This will launch your browser and request access to your Dropbox account. You will be prompted to log in if you aren't already logged in.
+
+# making token from your authorities specs
+
+token<- drop_auth(T)
+
+# save that token to directory to use later on
+saveRDS(token, file = "slump_interface/SL_CAiRS_token1.rds")
+
+# u can always use that token from app directory using
+
+# drop_auth(rdstoken = "web_script/SL_in_zes.rds")
+
+
+library(rdrop2)
+
+.dstate <- new.env(parent = emptyenv())
+
+drop_auth_RT <- function (new_user = FALSE, key = "mmhfsybffdom42w", secret = "l8zeqqqgm1ne5z0", cache = TRUE, rdstoken = NA) 
+{
+  if (new_user == FALSE & !is.na(rdstoken)) {
+    if (file.exists(rdstoken)) {
+      .dstate$token <- readRDS(rdstoken)
+    }
+    else {
+      stop("token file not found")
+    }
+  }
+  else {
+    if (new_user && file.exists(".httr-oauth")) {
+      message("Removing old credentials...")
+      file.remove(".httr-oauth")
+    }
+    dropbox <- httr::oauth_endpoint(authorize = "https://www.dropbox.com/oauth2/authorize?token_access_type=offline",
+                                    access = "https://api.dropbox.com/oauth2/token")
+    # added "?token_access_type=offline" to the "authorize" parameter so that it can return an access token as well as a refresh token
+    dropbox_app <- httr::oauth_app("dropbox", key, secret)
+    dropbox_token <- httr::oauth2.0_token(dropbox, dropbox_app, 
+                                          cache = cache)
+    if (!inherits(dropbox_token, "Token2.0")) {
+      stop("something went wrong, try again")
+    }
+    .dstate$token <- dropbox_token
+  }
+}
+
+refreshable_token <- drop_auth_RT()
+
+
+saveRDS(refreshable_token, file = "web_script/SL_CAiRS_r1.rds")
+
+```
+
